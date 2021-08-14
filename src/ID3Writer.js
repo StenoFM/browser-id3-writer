@@ -9,7 +9,8 @@ import {
     getCommentFrameSize,
     getUserStringFrameSize,
     getUrlLinkFrameSize,
-    getPrivateFrameSize
+    getPrivateFrameSize,
+    getSynchronisedLyricsFrameSize
 } from './sizes';
 
 export default class ID3Writer {
@@ -116,6 +117,20 @@ export default class ID3Writer {
         });
     }
 
+    _setSynchronisedLyricsFrame(type, text, timestampFormat, language) {
+        const languageCode = language.split('').map(c => c.charCodeAt(0));
+    
+        this.frames.push({
+          name: 'SYLT',
+          value: text,
+          language: languageCode,
+          type,
+          timestampFormat,
+          size: getSynchronisedLyricsFrameSize(text),
+          __type__: 'SynchronisedLyrics',
+        });
+      }
+
     constructor(buffer) {
         if (!buffer || typeof buffer !== 'object' || !('byteLength' in buffer)) {
             throw new Error('First argument should be an instance of ArrayBuffer or Buffer');
@@ -178,6 +193,24 @@ export default class ID3Writer {
                 this._setLyricsFrame(frameValue.language, frameValue.description, frameValue.lyrics);
                 break;
             }
+            case 'SYLT': { // Synchronised Lyrics
+                if (typeof frameValue !== 'object' || !('type' in frameValue) || !('text' in frameValue) || !('timestampFormat' in frameValue)) {
+                  throw new Error('SYLT frame value should be an object with keys type, text and timestampFormat');
+                }
+                if (!Array.isArray(frameValue.text) || !Array.isArray(frameValue.text[0])) {
+                  throw new Error('SYLT frame text value should be an array of pairs');
+                }
+                if (frameValue.type < 0 || frameValue.type > 6) {
+                  throw new Error('Incorrect SYLT frame content type');
+                }
+                if (frameValue.timestampFormat < 1 || frameValue.timestampFormat > 2) {
+                  throw new Error('Incorrect SYLT frame time stamp format');
+                }
+                frameValue.language = frameValue.language || 'XXX';
+        
+                this._setSynchronisedLyricsFrame(frameValue.type, frameValue.text, frameValue.timestampFormat, frameValue.language);
+                break;
+              }
             case 'APIC': { // song cover
                 if (typeof frameValue !== 'object' || !('type' in frameValue) || !('data' in frameValue) || !('description' in frameValue)) {
                     throw new Error('APIC frame value should be an object with keys type, data and description');
