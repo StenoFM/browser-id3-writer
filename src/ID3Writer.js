@@ -117,7 +117,7 @@ export default class ID3Writer {
         });
     }
 
-    _setSynchronisedLyricsFrame(type, text, timestampFormat, language) {
+    _setSynchronisedLyricsFrame(type, text, timestampFormat, language, descriptor) {
         const languageCode = language.split('').map(c => c.charCodeAt(0));
     
         this.frames.push({
@@ -125,9 +125,10 @@ export default class ID3Writer {
           value: text,
           language: languageCode,
           type,
+          descriptor,
           timestampFormat,
-          size: getSynchronisedLyricsFrameSize(text),
-          __type__: 'SynchronisedLyrics',
+          size: getSynchronisedLyricsFrameSize(descriptor, text),
+          __type__: 'SYLT',
         });
       }
 
@@ -194,6 +195,7 @@ export default class ID3Writer {
                 break;
             }
             case 'SYLT': { // Synchronised Lyrics
+                frameValue.language = frameValue.language || 'eng';
                 if (typeof frameValue !== 'object' || !('type' in frameValue) || !('text' in frameValue) || !('timestampFormat' in frameValue)) {
                   throw new Error('SYLT frame value should be an object with keys type, text and timestampFormat');
                 }
@@ -206,9 +208,9 @@ export default class ID3Writer {
                 if (frameValue.timestampFormat < 1 || frameValue.timestampFormat > 2) {
                   throw new Error('Incorrect SYLT frame time stamp format');
                 }
-                frameValue.language = frameValue.language || 'XXX';
+                // frameValue.language = frameValue.language || 'XXX';
         
-                this._setSynchronisedLyricsFrame(frameValue.type, frameValue.text, frameValue.timestampFormat, frameValue.language);
+                this._setSynchronisedLyricsFrame(frameValue.type, frameValue.text, frameValue.timestampFormat, frameValue.language, frameValue.descriptor);
                 break;
               }
             case 'APIC': { // song cover
@@ -438,6 +440,45 @@ export default class ID3Writer {
                     offset += frame.value.byteLength;
                     break;
                 }
+                case 'SYLT': {
+                    writeBytes = [1]; // encoding
+                    writeBytes = writeBytes.concat(frame.language); // language
+                    writeBytes = writeBytes.concat(frame.timestampFormat); // time stamp format
+                    writeBytes = writeBytes.concat(frame.type); // content type
+                    bufferWriter.set(writeBytes, offset);
+                    offset += writeBytes.length;
+
+                    writeBytes = [].concat(BOM); // BOM for content descriptor
+                    bufferWriter.set(writeBytes, offset);
+                    offset += writeBytes.length;
+
+                    writeBytes = encodeUtf16le(frame.descriptor); // content descriptor
+                    bufferWriter.set(writeBytes, offset);
+                    offset += writeBytes.length;
+
+                    writeBytes = [0, 0]; // separator, BOM for frame value
+                    bufferWriter.set(writeBytes, offset);
+                    offset += writeBytes.length;
+
+                    for (const line of frame.value) {
+                        writeBytes = [].concat(BOM); // BOM
+                        bufferWriter.set(writeBytes, offset);
+                        offset += writeBytes.length;
+
+                        writeBytes = encodeUtf16le(line[0].toString()); //lyric line
+                        bufferWriter.set(writeBytes, offset);
+                        offset += writeBytes.length;
+
+                        writeBytes = [0, 0]; // separator
+                        bufferWriter.set(writeBytes, offset);
+                        offset += writeBytes.length;
+
+                        writeBytes = uint32ToUint8Array(line[1]);
+                        bufferWriter.set(writeBytes, offset);
+                        offset += writeBytes.length;
+                    }
+                    break;
+                }
             }
         });
 
@@ -446,6 +487,7 @@ export default class ID3Writer {
         this.arrayBuffer = buffer;
         return buffer;
     }
+    
 
     getBlob() {
         return new Blob([this.arrayBuffer], {type: 'audio/mpeg'});

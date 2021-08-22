@@ -19,25 +19,6 @@ export function getStringFrameSize(frameSize) {
         frameUtf16Size;
 }
 
-export function getLyricsFrameSize(descriptionSize, lyricsSize) {
-    const headerSize = 10;
-    const encodingSize = 1;
-    const languageSize = 3;
-    const bomSize = 2;
-    const descriptionUtf16Size = descriptionSize * 2;
-    const separatorSize = 2;
-    const lyricsUtf16Size = lyricsSize * 2;
-
-    return headerSize +
-        encodingSize +
-        languageSize +
-        bomSize +
-        descriptionUtf16Size +
-        separatorSize +
-        bomSize +
-        lyricsUtf16Size;
-}
-
 export function getPictureFrameSize(pictureSize, mimeTypeSize, descriptionSize, useUnicodeEncoding) {
     const headerSize = 10;
     const encodingSize = 1;
@@ -110,23 +91,47 @@ export function getUrlLinkFrameSize(urlSize) {
         urlSize;
 }
 
-export function getSynchronisedLyricsFrameSize(lyrics) {
+export function getLyricsFrameSize(descriptionSize, lyricsSize) {
     const headerSize = 10;
     const encodingSize = 1;
     const languageSize = 3;
-    const timestampFormatSize = 1;
-    const contentTypeSize = 1;
     const bomSize = 2;
+    const descriptionUtf16Size = descriptionSize * 2;
     const separatorSize = 2;
-    const timestampSize = 4;
-    let encodedLyricsSize = 0;
-    lyrics.forEach((line) => {
-      encodedLyricsSize += bomSize + (line[0].length*2) + separatorSize + timestampSize;
-    });
+    const lyricsUtf16Size = lyricsSize * 2;
+
     return headerSize +
-          encodingSize +
-          languageSize +
-          timestampFormatSize +
-          contentTypeSize +
-          encodedLyricsSize;
+        encodingSize +
+        languageSize +
+        bomSize +
+        descriptionUtf16Size +
+        separatorSize +
+        bomSize +
+        lyricsUtf16Size;
+}
+
+export function getSynchronisedLyricsFrameSize(descriptor, lyrics) {
+  const headerSize = 10;
+  const encodingSize = 1;
+  const languageSize = 3;
+  const timestampFormatSize = 1;
+  const contentTypeSize = 1;
+  const bomSize = 2;
+  const separatorSize = 2;
+  const timestampSize = 4;
+  const descriptorTerminator = 2; //$00 (00)
+  const descriptorSize = descriptor.length * 2 + bomSize + descriptorTerminator;
+  let encodedLyricsSize = 0;
+  lyrics.forEach((line) => {
+    encodedLyricsSize += bomSize + (line[0].length*2) + separatorSize + timestampSize;
+  });
+
+  return headerSize +
+        encodingSize +
+        languageSize +
+        timestampFormatSize +
+        contentTypeSize +
+        encodedLyricsSize + 
+        descriptorSize
+    ;
   }
