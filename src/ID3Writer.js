@@ -10,7 +10,9 @@ import {
     getUserStringFrameSize,
     getUrlLinkFrameSize,
     getPrivateFrameSize,
-    getSynchronisedLyricsFrameSize
+    getSynchronisedLyricsFrameSize,
+    getChapterFrameSize,
+    getToCFrameSize
 } from './sizes';
 
 export default class ID3Writer {
@@ -35,25 +37,25 @@ export default class ID3Writer {
         });
     }
 
-    _setPictureFrame(pictureType, data, description, useUnicodeEncoding) {
+    _setPictureFrame(pictureType, data, description) {
+        this.frames.push(this._createPictureFrame(pictureType, data, description));
+    }
+
+    _createPictureFrame(pictureType, data, description) {
         const mimeType = getMimeType(new Uint8Array(data));
         const descriptionString = description.toString();
 
         if (!mimeType) {
             throw new Error('Unknown picture MIME type');
         }
-        if (!description) {
-            useUnicodeEncoding = false;
-        }
-        this.frames.push({
+        return {
             name: 'APIC',
             value: data,
             pictureType,
             mimeType,
-            useUnicodeEncoding,
             description: descriptionString,
-            size: getPictureFrameSize(data.byteLength, mimeType.length, descriptionString.length, useUnicodeEncoding),
-        });
+            size: getPictureFrameSize(data.byteLength, mimeType.length, descriptionString.length),
+        };
     }
 
     _setLyricsFrame(language, description, lyrics) {
@@ -95,6 +97,18 @@ export default class ID3Writer {
         });
     }
 
+    _setUserDefinedUrlLinkFrame(description, value) {
+        const descriptionString = description.toString();
+        const valueString = value.toString();
+
+        this.frames.push({
+            name: 'TXXX',
+            description: descriptionString,
+            value: valueString,
+            size: getUserStringFrameSize(descriptionString.length, valueString.length),
+        });
+    }
+
     _setUserStringFrame(description, value) {
         const descriptionString = description.toString();
         const valueString = value.toString();
@@ -117,9 +131,76 @@ export default class ID3Writer {
         });
     }
 
+    _setChapterFrame(chapter) {
+        const subFrames = chapter.subFrames
+            .map(({ id, params }) => {
+                switch (id) {
+                    case 'APIC':
+                        this._validateAPIC(params);
+                        return this._createPictureFrame(params.type, params.data, params.description);
+                    case 'TIT2':
+                    case 'TIT3':
+                        return {
+                            name: id,
+                            value: params,
+                            size: getStringFrameSize(params.length),
+                        };
+                    default:
+                        return null;
+                }
+            })
+            .filter(x => x);
+        this.frames.push({
+            name: 'CHAP',
+            id: chapter.id,
+            startTime: chapter.startTime,
+            endTime: chapter.endTime,
+            startOffset: chapter.startOffset,
+            endOffset: chapter.endOffset,
+            subFrames,
+            size: getChapterFrameSize(chapter.id.length, subFrames),
+        });
+    }
+
+    _setToCFrame(toc) {
+        const subFrames = toc.subFrames
+            .map(({ id, params }) => {
+                switch (id) {
+                    case 'TIT2':
+                    case 'TIT3':
+                        return {
+                            name: id,
+                            value: params,
+                            size: getStringFrameSize(params.length),
+                        };
+                    default:
+                        return null;
+                }
+            })
+            .filter(x => x);
+        this.frames.push({
+            name: 'CTOC',
+            id: toc.id,
+            ordered: toc.ordered,
+            topLevel: toc.topLevel,
+            childElementIds: toc.childElementIds,
+            subFrames,
+            size: getToCFrameSize(toc.id.length, toc.childElementIds, subFrames),
+        });
+    }
+
+    _validateAPIC(frameValue) {
+        if (typeof frameValue !== 'object' || !('type' in frameValue) || !('data' in frameValue) || !('description' in frameValue)) {
+            throw new Error('APIC frame value should be an object with keys type, data and description');
+        }
+        if (frameValue.type < 0 || frameValue.type > 20) {
+            throw new Error('Incorrect APIC frame picture type');
+        }
+    }
+
     _setSynchronisedLyricsFrame(type, text, timestampFormat, language, descriptor) {
         const languageCode = language.split('').map(c => c.charCodeAt(0));
-    
+
         this.frames.push({
           name: 'SYLT',
           value: text,
@@ -172,7 +253,8 @@ export default class ID3Writer {
             case 'TCOP': // copyright
             case 'TKEY': // musical key in which the sound starts
             case 'TEXT': // lyricist / text writer
-            case 'TSRC': { // isrc
+            case 'TSRC': // isrc
+            case 'TENC': { // encoded by
                 this._setStringFrame(frameName, frameValue);
                 break;
             }
@@ -209,17 +291,11 @@ export default class ID3Writer {
                   throw new Error('Incorrect SYLT frame time stamp format');
                 }
                 // frameValue.language = frameValue.language || 'XXX';
-        
                 this._setSynchronisedLyricsFrame(frameValue.type, frameValue.text, frameValue.timestampFormat, frameValue.language, frameValue.descriptor);
                 break;
               }
             case 'APIC': { // song cover
-                if (typeof frameValue !== 'object' || !('type' in frameValue) || !('data' in frameValue) || !('description' in frameValue)) {
-                    throw new Error('APIC frame value should be an object with keys type, data and description');
-                }
-                if (frameValue.type < 0 || frameValue.type > 20) {
-                    throw new Error('Incorrect APIC frame picture type');
-                }
+                this._validateAPIC(frameValue);
                 this._setPictureFrame(frameValue.type, frameValue.data, frameValue.description, !!frameValue.useUnicodeEncoding);
                 break;
             }
@@ -257,6 +333,14 @@ export default class ID3Writer {
                     throw new Error('PRIV frame value should be an object with keys id and data');
                 }
                 this._setPrivateFrame(frameValue.id, frameValue.data);
+                break;
+            }
+            case 'CHAP': { // Chapters
+                this._setChapterFrame(frameValue);
+                break;
+            }
+            case 'CTOC': { // Table of contents
+                this._setToCFrame(frameValue);
                 break;
             }
             default: {
@@ -306,7 +390,7 @@ export default class ID3Writer {
         bufferWriter.set(writeBytes, offset);
         offset += writeBytes.length;
 
-        this.frames.forEach((frame) => {
+        const writeFrame = (frame) => {
             writeBytes = encodeWindows1252(frame.name); // frame name
             bufferWriter.set(writeBytes, offset);
             offset += writeBytes.length;
@@ -349,7 +433,8 @@ export default class ID3Writer {
                 case 'TPUB':
                 case 'TCOP':
                 case 'TEXT':
-                case 'TSRC': {
+                case 'TSRC':
+                case 'TENC': {
                     writeBytes = [1].concat(BOM); // encoding, BOM
                     bufferWriter.set(writeBytes, offset);
                     offset += writeBytes.length;
@@ -479,15 +564,62 @@ export default class ID3Writer {
                     }
                     break;
                 }
+                case 'CHAP': {
+                    writeBytes = encodeWindows1252(`${frame.id  }\0`);
+                    bufferWriter.set(writeBytes, offset);
+                    offset += writeBytes.length;
+
+                    writeBytes = uint32ToUint8Array(frame.startTime);
+                    bufferWriter.set(writeBytes, offset);
+                    offset += writeBytes.length;
+
+                    writeBytes = uint32ToUint8Array(frame.endTime);
+                    bufferWriter.set(writeBytes, offset);
+                    offset += writeBytes.length;
+
+                    writeBytes = uint32ToUint8Array(frame.startOffset);
+                    bufferWriter.set(writeBytes, offset);
+                    offset += writeBytes.length;
+
+                    writeBytes = uint32ToUint8Array(frame.endOffset);
+                    bufferWriter.set(writeBytes, offset);
+                    offset += writeBytes.length;
+
+                    frame.subFrames.forEach(writeFrame);
+                    break;
+                }
+                case 'CTOC': {
+                    writeBytes = encodeWindows1252(`${frame.id  }\0`);
+                    bufferWriter.set(writeBytes, offset);
+                    offset += writeBytes.length;
+
+                    bufferWriter.set(
+                        [(frame.topLevel ? 2 : 0) | (frame.ordered ? 1 : 0)],
+                        offset
+                    );
+                    offset += 1;
+
+                    bufferWriter.set([frame.childElementIds.length], offset);
+                    offset += 1;
+
+                    frame.childElementIds.forEach(id => {
+                        writeBytes = encodeWindows1252(`${id  }\0`);
+                        bufferWriter.set(writeBytes, offset);
+                        offset += writeBytes.length;
+                    });
+
+                    frame.subFrames.forEach(writeFrame);
+                    break;
+                }
             }
-        });
+        };
+        this.frames.forEach(writeFrame);
 
         offset += this.padding; // free space for rewriting
         bufferWriter.set(new Uint8Array(this.arrayBuffer), offset);
         this.arrayBuffer = buffer;
         return buffer;
     }
-    
 
     getBlob() {
         return new Blob([this.arrayBuffer], {type: 'audio/mpeg'});
